@@ -7,6 +7,17 @@ Created on Tue Jun 11 09:29:52 2024
 
 import pandas as pd
 import pyomo.environ as pyo
+from datetime import datetime, timedelta
+
+def generate_time_steps(start_date, end_date):
+    # Liste der Zeitstempel generieren
+    date_list = []
+    current_date = start_date
+    while current_date <= end_date:
+        date_list.append(current_date.strftime("%Y-%m-%d %H:%M:%S"))
+        current_date += timedelta(hours=1)
+
+    return date_list
 
 # %% Calculate the marginal cost of a power plant
 def calculate_marginal_cost(pp_dict, fuel_prices, emission_factors):
@@ -52,18 +63,22 @@ def calculate_opt_market_clearing_price(powerplants, demand, vre_feed_in):
     model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
     
     # define set of the  plants
-    model.PP = pyo.Set(initialize= powerplants.index.tolist())
+    model.PP = pyo.Set(initialize=powerplants.index.tolist())
+    model.T = pyo.Set(initialize=generate_time_steps(datetime(2020, 1, 1, 0, 0, 0),
+                                                     datetime(2020, 1, 31, 0, 0, 0)))
     
-    # define variable for the power output of each plant
+    # define variable for the power output of each plant and it's minimum
     
-    model.P = pyo.Var(model.PP, domain=pyo.NonNegativeReals)
+    model.P = pyo.Var(model.PP, model.T, domain=pyo.NonNegativeReals)
+    # TODO
+    # model.Pmin
     
     # Define constraint for the demand 
     
-    def demand_rule(m):
-        return sum(m.P[pp] for pp in m.PP) + vre_feed_in == demand
+    def demand_rule(m, t):
+        return sum(m.P[pp, t] for pp in m.PP) + vre_feed_in[t] == demand
     
-    model.demand = pyo.Constraint(rule=demand_rule)
+    model.demand = pyo.Constraint(model.T, rule=demand_rule)
     
     # define constraint for capacity of each power plant
     
@@ -74,8 +89,12 @@ def calculate_opt_market_clearing_price(powerplants, demand, vre_feed_in):
     
     # define objective function - cost minimization
     def objective_function(m):
-        return sum(powerplants['marginal_cost'].at[pp] * m.P[pp] for pp in m.PP)
-    
+        # return sum(sum(powerplants['marginal_cost'].at[pp] * m.P[pp, t] for pp in m.PP) for t in m.T)
+        cost = 0
+        for t in m.T:
+            cost += sum(powerplants['marginal_cost'].at[pp] * m.P[pp, t] for pp in m.PP)
+        return cost
+
     model.objective = pyo.Objective(rule=objective_function, sense=pyo.minimize)
     
     # defining solver
