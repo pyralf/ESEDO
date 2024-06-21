@@ -81,6 +81,10 @@ def calculate_opt_market_clearing_price(powerplants, demand, vre_feed_in):
     # defining solver
     opt = pyo.SolverFactory('glpk')
     results = opt.solve(model)
+    print(results)
+    print("Print in For loop:\n")
+    for v in model.component_data_objects([pyo.Var, pyo.Objective], active=True):
+        print(v, '=', pyo.value(v))
     
     # Dual variable of the demand is the market clearing price
     mcp = model.dual[model.demand]
