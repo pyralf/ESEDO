@@ -56,6 +56,11 @@ def calculate_marginal_cost(pp_dict, fuel_prices, emission_factors):
 # %% Calculate the marginal cost of a power plant
 
 def calculate_opt_market_clearing_price(powerplants_df, demand_df, vre_gen_df, timestep_list):
+    """
+    Calculates and returns the optimal market clearing prices for a given list of time steps based on
+    the power plant capacities, the demand and the variable renewable energy (vre) fed in.
+    """
+
     # Creating model
     model = pyo.ConcreteModel()
     
@@ -68,21 +73,23 @@ def calculate_opt_market_clearing_price(powerplants_df, demand_df, vre_gen_df, t
     
     # define variable for the power output of each plant and it's minimum
     model.P = pyo.Var(model.PP, model.T, domain=pyo.NonNegativeReals)
-    # TODO
-    # model.Pmin
-    
+
     # Define constraint for the demand
     def demand_rule(m, t):
-        return sum(m.P[pp, t] for pp in m.PP) + vre_gen_df.loc[t].sum() == demand_df["demand"].at[t]
+        return sum(m.P[pp, t] for pp in m.PP) + vre_gen_df.loc[t].sum() >= demand_df["demand"].at[t]
     
     model.demand = pyo.Constraint(model.T, rule=demand_rule)
     
     # define constraint for capacity of each power plant
-    def capacity_rule(m, pp):
-        return m.P[pp] <= powerplants_df.loc[pp, 'capacity']
+    def capacity_rule(m, pp, t):
+        return m.P[pp, t] <= powerplants_df.loc[pp, 'capacity']
 
-    model.capacity = pyo.Constraint(model.PP, rule=capacity_rule)
-    
+    model.capacity = pyo.Constraint(model.PP, model.T, rule=capacity_rule)
+
+    # TODO Step 2: Consider the minimum capacity of power plants
+    #    yi,t · Pi,min ≤ Pi,t ≤ yi,t · Pi,max ∀i ∈ {1, . . . , N}, ∀t ∈ {1, . . . , T}
+    #    QUESTION: Where does Pi,min come from or how is it derived?
+
     # define objective function - cost minimization
     def objective_function(m):
         # return sum(sum(powerplants['marginal_cost'].at[pp] * m.P[pp, t] for pp in m.PP) for t in m.T)
@@ -94,14 +101,24 @@ def calculate_opt_market_clearing_price(powerplants_df, demand_df, vre_gen_df, t
 
     model.objective = pyo.Objective(rule=objective_function, sense=pyo.minimize)
     
-    # defining solver
+    # defining solver and solve
     opt = pyo.SolverFactory('glpk')
     results = opt.solve(model)
+    print(results)
+    print("Print in For loop:\n")
+    for v in model.component_data_objects([pyo.Var, pyo.Objective], active=True):
+        print(v, '=', pyo.value(v))
     
     # Dual variable of the demand is the market clearing price
-    mcp = model.dual[model.demand]
+    # HINT: Use model.dual.display() to display all the content of dual variable
+    print("\nResulting MCPs (Market Clearing Prices):")
+    mcp_list = []
+    for t in model.T:
+        mcp = model.dual[model.demand[t]]
+        mcp_list.append(mcp)
+        print(f"   MCP at {t}: {mcp}")
     
-    return mcp
+    return mcp_list
 
 
 # %% Define the required dictionaries
@@ -144,7 +161,7 @@ vre_gen = cf_df * installed_cap
 # %% Calculate the market clearing price
 
 timestep_list = generate_time_steps(datetime(2020, 1, 1, 0, 0, 0),
-                                    datetime(2020, 1, 31, 0, 0, 0))
+                                    datetime(2020, 1, 1, 23, 0, 0))
 
 market_clearing_price = calculate_opt_market_clearing_price(powerplants,
                                                             demand_df,
