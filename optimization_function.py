@@ -67,11 +67,11 @@ def calculate_opt_market_clearing_price(powerplants_df, demand_df, vre_gen_df, t
     # Activating dual variables
     model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
     
-    # define set of the plants and time steps
+    # Define set of the plants and time steps
     model.PP = pyo.Set(initialize=powerplants_df.index.tolist())
     model.T = pyo.Set(initialize=timestep_list)
-    
-    # define variable for the power output of each plant and it's minimum
+
+    # Define variable for the power output of each plant and it's minimum
     model.P = pyo.Var(model.PP, model.T, domain=pyo.NonNegativeReals)
 
     # Define constraint for the demand
@@ -79,18 +79,29 @@ def calculate_opt_market_clearing_price(powerplants_df, demand_df, vre_gen_df, t
         return sum(m.P[pp, t] for pp in m.PP) + vre_gen_df.loc[t].sum() >= demand_df["demand"].at[t]
     
     model.demand = pyo.Constraint(model.T, rule=demand_rule)
-    
-    # define constraint for capacity of each power plant
-    def capacity_rule(m, pp, t):
-        return m.P[pp, t] <= powerplants_df.loc[pp, 'capacity']
-
-    model.capacity = pyo.Constraint(model.PP, model.T, rule=capacity_rule)
 
     # TODO Step 2: Consider the minimum capacity of power plants
-    #    yi,t · Pi,min ≤ Pi,t ≤ yi,t · Pi,max ∀i ∈ {1, . . . , N}, ∀t ∈ {1, . . . , T}
+    #    on_off i,t · Pi,min ≤ Pi,t ≤ on_off i,t · Pi,max ∀i ∈ {1, . . . , N}, ∀t ∈ {1, . . . , T}
     #    QUESTION: Where does Pi,min come from or how is it derived?
 
-    # define objective function - cost minimization
+    # Decision variable on / off (0 / 1) for power plants at given time
+    model.ON_OFF = pyo.Var(model.PP, model.T, domain=pyo.Binary)
+
+    # Set power plants Pmin as a fictive 10% of capacity, as we have no real values!
+    powerplants['Pmin'] = 0.1 * powerplants['capacity']
+
+    # Define constraint for capacity of each power plant
+    def capacity_rule_upper(m, pp, t):
+        # return m.P[pp, t] <= powerplants_df.loc[pp, 'capacity']
+        return m.P[pp, t] <= m.ON_OFF[pp, t] * powerplants_df.loc[pp, 'capacity']
+
+    def capacity_rule_lower(m, pp, t):
+        return m.P[pp, t] >= m.ON_OFF[pp, t] * powerplants_df.loc[pp, 'Pmin']
+
+    model.upper_capacity = pyo.Constraint(model.PP, model.T, rule=capacity_rule_upper)
+    model.lower_capacity = pyo.Constraint(model.PP, model.T, rule=capacity_rule_lower)
+
+    # Define objective function - cost minimization
     def objective_function(m):
         # return sum(sum(powerplants['marginal_cost'].at[pp] * m.P[pp, t] for pp in m.PP) for t in m.T)
         cost = 0
@@ -111,6 +122,7 @@ def calculate_opt_market_clearing_price(powerplants_df, demand_df, vre_gen_df, t
     
     # Dual variable of the demand is the market clearing price
     # HINT: Use model.dual.display() to display all the content of dual variable
+    print(model.dual.display())
     print("\nResulting MCPs (Market Clearing Prices):")
     mcp_list = []
     for t in model.T:
